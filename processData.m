@@ -2,13 +2,13 @@
 
 %% Open NSx file
 tic;
-openNSxNew
+openNSxNew(input)
 file = NS5.MetaTags.Filename(1:end-4);
 filepath = NS5.MetaTags.FilePath(1:end-3);
 
 %% Find channels with hippocampal data and find recording frequency
 names = {NS5.ElectrodesInfo.Label};
-hippoCh = find (strncmp ('uHH',names,3) == 1);
+hippoCh = find ((strncmp ('uHH',names,3) == 1) | (strncmp ('uHT',names,3) == 1) | (strncmp ('uHB',names,3) == 1));
 sample_rate = NS5.MetaTags.SamplingFreq;
 channelNum = length(hippoCh);
 
@@ -28,7 +28,7 @@ end
 Wn = [300/(0.5*sample_rate) 7500/(0.5*sample_rate)];
 
 [b,a] = butter (2, Wn);
-for r = 1:channelNum
+for r = 1:channelNum 
     hippoStruct(r).filteredData = filtfilt(b,a,hippoStruct(r).data);
     deciData(r,:) = hippoStruct(r).filteredData(1:10:end);
     hippoStruct(r).denoisedData = hippoStruct(r).filteredData;
@@ -62,6 +62,7 @@ idx = find(idx1);
 yest = smoothCross(idx-1)<cutoff;
 posCross = idx(yest);
 posCross(end) = [];
+idx(end) = 0;
 yest2 = smoothCross(idx+1)<cutoff;
 negCross = idx(yest2);
 discharges = zeros (length(posCross),2);
@@ -73,11 +74,14 @@ end
 hippoStruct(1).dischargePeriods = discharges;
 
 %% Find and remove noisy epochs
-comb = zeros (1,length(deciData));
-for n = 1:length(deciData(1,:))
-    comb(n) = mean (deciData(:,n));
+
+noise = deciData(1,:);
+if channelNum > 1
+    for a = 2:channelNum
+        noise = noise - deciData(a,:);
+    end
 end
-noisePower = (power((deciData(1,:)-deciData(2,:)-deciData(3,:)-deciData(4,:)-deciData(5,:)-deciData(6,:)-deciData(7,:)-deciData(8,:)),2));
+noisePower = power(noise,2);
 smoothPower = smooth(noisePower, 30000);
 SPA = mean(smoothPower);
 SPstd = std(smoothPower);
@@ -128,9 +132,8 @@ NEV = openNEV(strcat(filepath,'Raw\', file,'.nev'));
 trigs = double(NEV.Data.SerialDigitalIO.UnparsedData);
 trigTimes = double(NEV.Data.SerialDigitalIO.TimeStampSec);
 TimeRes = NEV.MetaTags.TimeRes;
+
 nTrials = sum(trigs==90);
-
-
 %% parsing behavior
 trialType = zeros(1,nTrials);
 condition = trigs(trigs>=1 & trigs<28);
@@ -145,6 +148,11 @@ trialType(condition>=22 & condition<=27) = 3;  % Type 1b Distractor interference
 
 %% Cues and response times.
 cueTimes = trigTimes(trigs>=1 & trigs<=27);
+for b = 1:length(cueTimes)
+    if find(cueTimes(b)==filledIn) > 0
+        cueTimes(b) = 0;
+    end
+end
 respTimes = trigTimes(trigs>=100 & trigs<=103);
 if (length(cueTimes) > length(respTimes) && length(cueTimes) == length(trialType))
     cueTimes(end) = [];
@@ -169,6 +177,15 @@ respInt2 = respTimes(int2);
 hard = find (trialType == 4);
 cueHard = cueTimes(hard);
 respHard = respTimes(hard);
+
+% Remove cues from noisy sections
+
+cueTimes(cueTimes == 0) = [];
+cueEasy(cueEasy == 0) = [];
+cueInt1(cueInt1 == 0) = [];
+cueInt2(cueInt2 == 0) = [];
+cueHard(cueHard == 0) = [];
+
 
 %% do statistics on RTs over conflict
 [P,~,behavioralStats] = anova1(RTs,trialType,'off');
@@ -215,6 +232,6 @@ save (strcat(destination, file, ext), 'hippoStruct', 'discharges', '-v7.3')
 
 % Print time
 clc;
-clearvars -except T;
+% clearvars -except T;
 T = toc;
 fprintf(1, 'Done!  Elapsed time: %0.1f seconds\n', T);
