@@ -1,20 +1,17 @@
 %% plotPSTH
 
+function y = plotPSTH(patientID,sessionNum)
+
 %% Pull data
 NEX = readNexFile;
 events = [NEX.events{1:10,1}];
 units = [NEX.neurons{:}];
 names =  {units.name};
-
-unsorted = find(~cellfun('isempty',regexpi (names, 'U$')'));
-unita = find(~cellfun('isempty',regexpi (names, 'a$')'));
-unitb = find(~cellfun('isempty',regexpi (names, 'b$')'));
-unitc = find(~cellfun('isempty',regexpi (names, 'c$')'));
-
-unitsID(unsorted) = 9;
-unitsID(unita) = 1;
-unitsID(unitb) = 2;
-unitsID(unitc) = 3;
+% 
+% unsorted = find(~cellfun('isempty',regexpi (names, 'U$')'));
+% unita = find(~cellfun('isempty',regexpi (names, 'a$')'));
+% unitb = find(~cellfun('isempty',regexpi (names, 'b$')'));
+% unitc = find(~cellfun('isempty',regexpi (names, 'c$')'));
 
 %% Create neural timing variable
 ChanUnitTimestamp = [];
@@ -37,8 +34,7 @@ post = 3;
 inclChans = unique(ChanUnitTimestamp(:,1));
 nChans = length(inclChans);
 nTrials = length(events(1).timestamps);
-patientID = 'CUBF11';
-sessionNum = 1;
+
 
 %% aligning AP data.
 display('Aligning AP data on stimulus and response.');
