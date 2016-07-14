@@ -19,13 +19,17 @@ function [] = processData(patientID, region, varargin)
 %                           within 5 seconds of beginning or end of discharge. Note: this option
 %                           will enable detectDischarge, too.
 %
+%   'plot':                 Plots results of denoising process. Off by
+%                           default.
 %
+%   'spartan':              Only performs filters for LFP and spikes and
+%                           saves results.
 tic;
-
-%Rename files to append '_RAW_' 
+memSample(1) = getfield(memory,'MemUsedMATLAB');
+%Rename files to append '_RAW_'
 titleRAW(patientID);
 
-% default parameters
+%% default parameters
 lfponly = 0; % Disables spike steps when enabled.
 dischargeFlag = 0; %Enables discharge detection
 removeDischarge = 0; %Strips discharge cues from LFP data
@@ -35,8 +39,9 @@ filepath = 'C:\Users\melete2\Desktop\TobyData\';
 cd ([filepath num2str(patientID) '\Raw\'])
 files = dir ('*.ns5');
 files = {files.name}';
+plotFlag = 0;
 
-
+%% parse inputs
 for i = 1:length(varargin)
     inputArgument = varargin{i};
     if strcmpi(inputArgument, 'LFPonly')
@@ -46,6 +51,14 @@ for i = 1:length(varargin)
     elseif strcmpi (inputArgument, 'removeDischarges')
         dischargeFlag = 1;
         removeDischarge = 1;
+    elseif strcmpi (inputArgument, 'plot')
+        plotFlag = 1;
+    elseif strcmpi (inputArgument, 'spartan')
+        spartanFlag = 1;
+        plotFlag = 0;
+        dischargeFlag = 0;
+        removeDischarge = 0;
+        lfponly = 0;
     end
 end
 
@@ -54,55 +67,76 @@ end
 for curr = 1:length(files)
     file = char(files(curr));
     %% Open NSx file
-    openNSxNew (strcat(filepath, num2str(patientID), '\Raw\', file));
+    openNSxNew (strcat(filepath, num2str(patientID), '\Raw\', file),'skipfactor',10);
     
     %% Find channels with hippocampal data and find recording frequency
-    names = {NS5.ElectrodesInfo.Label};
+    namesAll = {NS5.ElectrodesInfo.Label};
     if strcmpi (region, 'hippocampus')
-        regCh = find ((strncmp ('uHH',names,3) == 1) | (strncmp ('uHT',names,3) == 1) | (strncmp ('uHB',names,3) == 1) | (strncmp ('uHC',names,3) == 1));
+        regCh = find ((strncmp ('uHH',namesAll,3) == 1) | (strncmp ('uHT',namesAll,3) == 1) | (strncmp ('uHB',namesAll,3) == 1) | (strncmp ('uHC',namesAll,3) == 1));
     elseif strcmpi (region, 'acc')
-        regCh = find ((strncmp ('uAC',names,3) == 1));
+        regCh = find ((strncmp ('uAC',namesAll,3) == 1));
     elseif strcmpi (region, 'all')
-        regCh = find ((strncmp ('ainp',names,4) ~= 1));
+        regCh = find ((strncmp ('ainp',namesAll,4) ~= 1));
     end
     sample_rate = NS5.MetaTags.SamplingFreq;
-    samples = length(NS5.Data);
+    samples = 10*length(NS5.Data);
+    memSample(end+1) = getfield(memory,'MemUsedMATLAB');
+    deci = double(NS5.Data(regCh,:));
+    names = namesAll(regCh);
     channelNum = length(regCh);
-    raw = nan(channelNum,samples);
-    raw = double(NS5.Data(regCh,:));
     clear NS5;
-    
+
     
     if ~isempty (regCh)
-    
+        %% Find discharges
+        if dischargeFlag == 1
+            deciAvg = mean(deci);
+            avg = mean(deciAvg);
+            stdev = std(deciAvg);
+            plot (abs(deciAvg));
+            hold;
+            discharges = find(abs(deciAvg) > (2*stdev + avg));
+        end
+        
+        %% Load channels with data
+        options = sprintf('c:%d:%d',min(regCh),max(regCh));
+        NS5 = openNSx(strcat(filepath, num2str(patientID), '\Raw\', file), options, 'p:double');
+        
+        %% Find noise
+        %decideci = deciAvg(1:10:end);
+        raw = nan(channelNum,samples);
+        raw = NS5.Data;
+        clear NS5;
+        memSample(end+1) = getfield(memory,'MemUsedMATLAB');
+        
         %% Bandpass filter amplifier data for spikes
         Wn = [300/(0.5*sample_rate) 7500/(0.5*sample_rate)];
         [b,a] = butter (2, Wn);
-        spikefilt = nan (size(raw));
-        for y = 1:channelNum
-            spikefilt(y,:) = filtfilt (b,a,raw(y,:));
-        end
+        highPass = nan(size(raw));
+        for ch = 1:channelNum
+            highPass(ch,:) = filtfilt(b,a,raw(ch,:));
+        end    
+            
+        %deciData = nan(channelNum,length(raw)/10); %move this line
+        save(strcat(filepath,num2str(patientID),file(1:end-8),upper(region),'_PRESORT'), 'raw', 'highPass', '-v7.3');
+        memSample(end+1) = getfield(memory,'MemUsedMATLAB');
         
         %% Low pass filter amplifier data for LFP
         Wn = 300/(0.5*sample_rate);
         [b,a] = butter (2, Wn);
-        
-        for r = 1:channelNum
-            hippoStruct(r).LFP = filtfilt(b,a,hippoStruct(r).data);
-            LFP(r,:) = hippoStruct(r).LFP;
-            if lfponly == 1
-                deciData(r,:) = hippoStruct(r).data(1:10:end);
-            end
-        end
+        lowPass = nan(size(raw));
+        for ch = 1:channelNum
+            lowPass(ch,:) = filtfilt(b,a,raw(ch,:));
+        end 
+        save(strcat(filepath,num2str(patientID),file(1:end-8),upper(region),'_PRESORT'),'-append', 'lowPass');
+        memSample(end+1) = getfield(memory,'MemUsedMATLAB');
+        clear lowPass
         
         %% Bandpass filter amplifier data for discharge detection
         if dischargeFlag == 1
             Wn = [5/(0.5*sample_rate) 7500/(0.5*sample_rate)];
-            
             [b,a] = butter (2, Wn);
-            for r = 1:channelNum
-                hippoStruct(r).highFive = filtfilt(b,a,hippoStruct(r).data);
-            end
+            disPass = filtfilt(b,a,raw(1,:)')';
             
             %% Detect discharge periods
             smoothCross = abs(smooth(hippoStruct(1).highFive,10000));
@@ -124,69 +158,70 @@ for curr = 1:length(files)
                 later = find(negCross>posCross(a));
                 discharges(a,2) = negCross(later(1));
             end
-            hippoStruct(1).dischargePeriods = discharges;
+            memSample(end+1) = getfield(memory,'MemUsedMATLAB');
+            
         end
         %% Find and remove noisy epochs
-        
-        noise = mean(deciData);
-        % if channelNum > 1
-        %     for a = 2:channelNum
-        %         noise = noise + deciData(a,:);
-        %     end
-        % end
-        noisePower = power(noise,2);
-        smoothPower = smooth(noisePower, 30000);
-        SPA = mean(smoothPower);
-        SPstd = std(smoothPower);
-        cutoff = SPA + SPstd;
-        locations = 10*find(smoothPower>cutoff);
-        filledIn = zeros(10*length(locations),1);
-        for o = 1:(length(filledIn)-1)
-            filledIn(o) = locations(floor(o/10)+1)+(rem(o,10)-1);
-        end
-        filledIn(end)=[];
-        
-        %remove noisy epochs from all channels
-        for q = 1:channelNum
-            for p = 1:length(filledIn)
-                hippoStruct(q).denoisedData(filledIn(p))=0;
-                LFP(q,filledIn(p))=0;
+        if spartanFlag ~= 1
+            noise = mean(deciData);
+            noisePower = power(noise,2);
+            smoothPower = smooth(noisePower, 30000);
+            SPA = mean(smoothPower);
+            SPstd = std(smoothPower);
+            cutoff = SPA + SPstd;
+            locations = 10*find(smoothPower>cutoff);
+            filledIn = zeros(10*length(locations),1);
+            for o = 1:(length(filledIn)-1)
+                filledIn(o) = locations(floor(o/10)+1)+(rem(o,10)-1);
             end
-        end
-        
-        %% Results
-        if lfponly ~=1
-            channel = 1; %select channel to view results from
+            filledIn(end)=[];
+            memSample(end+1) = getfield(memory,'MemUsedMATLAB');
             
-            plot0 = subplot(4,1,1);
-            plot(hippoStruct(channel).data);
-            title('Raw Data');
-            
-            filtPlot = subplot(4,1,2);
-            plot(hippoStruct(channel).filteredData);
-            title('Bandpassed Data');
-            
-            plot1 = subplot(4,1,3);
-            plot (smoothPower, 'LineWidth', 2);
-            title('Smoothed Data Denoising');
-            
-            plot2 = subplot (4,1,4);
-            plot (hippoStruct(channel).denoisedData);
-            title('Final Denoised Data');
-            deciNoise = filledIn(1:1000:length(filledIn));
-            for num = 1:length(deciNoise);
-                SP = deciNoise(num);
-                line([SP SP],get(plot2,'YLim'),'Color',[1 0 0], 'LineWidth', 0.1, 'LineStyle', '--');
+            %remove noisy epochs from all channels
+            for q = 1:channelNum
+                for p = 1:length(filledIn)
+                    hippoStruct(q).denoisedData(filledIn(p))=0;
+                    LFP(q,filledIn(p))=0;
+                end
             end
             
-            print(strcat(filepath, num2str(patientID),'\Presort\', 'Results_', '_', upper(region), '_', file(1:end-9),'_PRESORT_'),'-dpng');
+            %% Results
+            if plotFlag == 1;
+                if lfponly ~=1
+                    channel = 1; %select channel to view results from
+                    
+                    plot0 = subplot(4,1,1);
+                    plot(hippoStruct(channel).data);
+                    title('Raw Data');
+                    
+                    filtPlot = subplot(4,1,2);
+                    plot(hippoStruct(channel).filteredData);
+                    title('Bandpassed Data');
+                    
+                    plot1 = subplot(4,1,3);
+                    plot (smoothPower, 'LineWidth', 2);
+                    title('Smoothed Data Denoising');
+                    
+                    plot2 = subplot (4,1,4);
+                    plot (hippoStruct(channel).denoisedData);
+                    title('Final Denoised Data');
+                    deciNoise = filledIn(1:1000:length(filledIn));
+                    for num = 1:length(deciNoise);
+                        SP = deciNoise(num);
+                        line([SP SP],get(plot2,'YLim'),'Color',[1 0 0], 'LineWidth', 0.1, 'LineStyle', '--');
+                    end
+                    
+                    print(strcat(filepath, num2str(patientID),'\Presort\', 'Results_', '_', upper(region), '_', file(1:end-9),'_PRESORT_'),'-dpng');
+                end
+            end
         end
         %% Get Elliot's behavioral data
         NEV = openNEV(strcat(filepath, num2str(patientID), '\Raw\', file(1:end-4),'.nev'), 'nomat', 'nosave');
         trigs = double(NEV.Data.SerialDigitalIO.UnparsedData);
         trigTimes = double(NEV.Data.SerialDigitalIO.TimeStampSec);
         TimeRes = NEV.MetaTags.TimeRes;
-        
+        memSample(end+1) = getfield(memory,'MemUsedMATLAB');
+
         nTrials = sum(trigs==90);
         %% parsing behavior
         trialType = zeros(1,nTrials);
@@ -203,37 +238,44 @@ for curr = 1:length(files)
         %% Cues and response times.
         cueTimes = trigTimes(trigs>=1 & trigs<=27);
         respTimes = trigTimes(trigs>=100 & trigs<=103);
-        
-        if (length(respTimes) < length(cueTimes))
-            cueTimes(end) = [];
+        if length(cueTimes) == length(respTimes);
+            RTs = respTimes - cueTimes;
         end
         
-        if length(trialType)>length(respTimes)
-            trialType(end) = [];
-        end
-        
-        cueTimes(find ((respTimes-cueTimes)>20,1,'first')) = [];
-        
-        if length(respTimes)>length(cueTimes)
-            respTimes(end) = [];
-        end
-        
-        for b = 1:length(cueTimes)
-            if find(cueTimes(b)==filledIn) > 0
-                cueTimes(b) = 0;
-                respTimes(b) = 0;
-                if removeDischarge == 1
-                    if any((cueTimes(b)+postDisch)>discharges(:,2) & cueTimes(b-preDisch)<discharges(:,1))
-                        cueTimes(b) = 0;
-                        respTimes(b) = 0;
+%         if (length(respTimes) < length(cueTimes))
+%             cueTimes(end) = [];
+%         end
+%         
+%         if length(trialType)>length(respTimes)
+%             trialType(end) = [];
+%         end
+%         
+%         cueTimes(find ((respTimes-cueTimes)>20,1,'first')) = [];
+%         
+%         if length(respTimes)>length(cueTimes)
+%             respTimes(end) = [];
+%         end
+%         
+        if spartanFlag ~= 1
+            for b = 1:length(cueTimes)
+                if find(cueTimes(b)==filledIn) > 0
+                    cueTimes(b) = 0;
+                    respTimes(b) = 0;
+                    if removeDischarge == 1
+                        if any((cueTimes(b)+postDisch)>discharges(:,2) & cueTimes(b-preDisch)<discharges(:,1))
+                            cueTimes(b) = 0;
+                            respTimes(b) = 0;
+                        end
                     end
                 end
             end
         end
         
-       
         
-        RTs = respTimes-cueTimes;
+        
+%         RTs = respTimes-cueTimes;
+        memSample(end+1) = getfield(memory,'MemUsedMATLAB');
+
         
         %% Locate easy, intermediate and hard trials %new
         easy = find (trialType == 1);
@@ -285,8 +327,8 @@ for curr = 1:length(files)
         clearvars NS5
         for l=1:channelNum
             if lfponly ~= 1
-                chName = names{regCh(l)};
-                nexFile = nexAddContinuous (nexFile, 0, sample_rate, hippoStruct(l).denoisedData, chName(1:4));
+                chName = names{l};
+                nexFile = nexAddContinuous (nexFile, 0, sample_rate, highPass(l,:), chName(1:4));
             end
             nexFile = nexAddEvent (nexFile, cueTimes, 'cueTimes');
             nexFile = nexAddEvent (nexFile, respTimes, 'respTimes');
@@ -312,22 +354,22 @@ for curr = 1:length(files)
         clearvars nexFile
         ext = '.mat';
         if lfponly ~= 1 && dischargeFlag == 1
-            save (strcat(destination, file(1:end-8),'_PRESORT_',upper(region),'_', ext), 'hippoStruct', 'discharges','LFP', '-v7.3')
+            save (strcat(destination, file(1:end-8),'_PRESORT_',upper(region),'_', ext), 'discharges','LFP', '-v7.3')
         else if lfponly == 1 && dischargeFlag == 1
                 save (strcat(destination, file(1:end-8),'_LFP_',upper(region),'_', ext), 'LFP', 'discharges', '-v7.3')
-            else if lfponly ~=1 && dischargeFlag ~= 1
-                    save (strcat(destination, file(1:end-8),'_PRESORT_',upper(region),'_', ext), 'hippoStruct','LFP', '-v7.3')
                 else if lfponly == 1 && dischargeFlag ~= 1
                         save (strcat(destination, file(1:end-8),'_LFP_',upper(region),'_', ext), 'LFP', '-v7.3')
                     end
                 end
             end
-            end
-    else %If there is no data from that region
+        end
+   %If there is no data from that region
     end
-    clearvars hippoStruct LFP discharges deciData
-end %Loop over files
-% Print time
+    clearvars  LFP discharges deciData
+%Loop over files
+% Print time & plot memory usage
+plot(memSample);
+title('Memory Usage');
 clc;
 % clearvars -except T;
 T = toc;
