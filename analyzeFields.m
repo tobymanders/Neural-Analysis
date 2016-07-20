@@ -2,10 +2,10 @@
 [nexf, nexp] = uigetfile;
 matf = [nexf(1:end-4) '.mat'];
 MATOBJ = matfile([nexp matf]);
-[~,nChan] = size(MATOBJ, 'hippoStruct');
-% nChan = 8;
-LFP = MATOBJ.LFP;
-LFP = LFP(:,1:30:end);
+[nChan,~] = size(MATOBJ, 'LFP');
+LFP = double(MATOBJ.LFP);
+LFP = LFP(:,1:15:end);
+l = 1;
 
 %% Pull events from .nex file
 NEX = readNexFile([nexp nexf]);
@@ -31,12 +31,12 @@ clearvars NEX;
 
 
 %% defining Chronux parameters.
-movingWin = [0.8 0.080];
-params.Fs = 1e3; % sampling frequency for LFP
-params.pad = 2; %
-params.fpass = [0 200]; % frequency range of interest
+movingWin = [0.8 0.020];
+params.Fs = 2e3; % sampling frequency for LFP
+params.pad = 1; %
+params.fpass = [0 50]; % frequency range of interest
 params.tapers = [5 9]; % emphasize smoothing for the spikes
-params.trialave = 0; % average over trials {CHANGES BELOW}
+params.trialave = 1; % average over trials {CHANGES BELOW}
 params.err = [2 0.01]; % population error bars
 
 
@@ -50,6 +50,25 @@ col0 = [183 30 103]./255;
 col1a = [246 139 31]./255;
 col1b = [0 166 81]./255;
 col2 = [82 79 161]./255;
+
+
+%% [20160610] denoising LFP
+denoiseMethod = 'notch'
+switch denoiseMethod
+    case 'PCA'
+        display('denoising using PCA...')
+        LFP = remove1stPC(double(LFP));
+        display('...done.')
+    case 'notch'
+        Wo = 60/(params.Fs/2);  BW = Wo/50;
+        [b,a] = iirnotch(Wo,BW);
+        %        freqz(b,a);
+        for c = 1:size(LFP,1)
+            display(sprintf('applying notch filter to channel %d',c))
+            LFP(c,:) = filtfilt(b,a,double(LFP(c,:)));
+        end
+end
+
 
 
 %% building LFP tensor and plotting ERPs and spectrograms.
@@ -120,7 +139,7 @@ trialType(int2Cues) = 3;  % Type 1b Distractor interference (Cond # 21-27)
         % plotting LFP and spectrograms
         handleF = ch*100;
         brdr = 0.04;
-        figure(handleF)
+        currFig = figure(handleF);
         % first, ERPs
         plotmultipleaxes(2,1,4,brdr,handleF)
         hold on
@@ -161,8 +180,12 @@ trialType(int2Cues) = 3;  % Type 1b Distractor interference (Cond # 21-27)
         colorbar('NorthOutside')
         colormap(jet)
         
-        
-        
+        saveas(currFig, strcat(nexp(1:end-8),'LFP\',nexf(1:end-12),'LFP_', num2str(l)),'pdf');
+        l = l+1;
     end % looping over lfp channels
 end % looping over align spots (Stimulus & response)
+
+close all
+clear all
+clc
 
