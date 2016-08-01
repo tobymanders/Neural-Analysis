@@ -12,20 +12,22 @@ params.band = 'all'; %choose b/w 'theta' and 'all'
 params.blstart = -1;
 params.blend = -0.5;
 params.wire = 'micro';
-params.region = 'acc'; %Region of interest
+params.region = 'hippocampus'; %Region of interest
 params.denoiseMethod = 'notch'; %choose between 'PCA' and 'notch'
 params.pre = 2; %seconds before event
 params.post = 3; %seconds after event
-params.movingWin = [.8 0.04];
+params.movingWin = [.5 0.02];
 params.Fs = 1e3; % desired frequency for LFP
 params.pad = 2; %
-params.fpass = [5 9]; % frequency range of interest
+params.fpass = [0 150]; % frequency range of interest
 params.tapers = [5 9]; % emphasize smoothing for the spikes
 params.trialave = 0; % average over trials
 params.err = [2 0.01]; % population error bars
 params.notch = 60;
-params.cutoff = 50;
+params.cutoff = 200;
 params.samplelen = 10; % in seconds
+params.macronum = 2;
+params.plotrange = [0 50];
 
 % Define brain wave bands.
 params.delta = [2 5];
@@ -56,7 +58,7 @@ pause;
 [nevf, nevp] = uigetfile;
 [~, nvName, ~] = fileparts([nevp nevf]);
 NEV = openNEV([nevp nevf], 'nomat', 'nosave');
-h = waitbar(0,'Sit tight. Scrutinizing data...');
+% h = waitbar(0,'Sit tight. Scrutinizing data...');
 
 %% Pull out trial info
 display ('Extracting trial information...');
@@ -82,6 +84,12 @@ trialType(condition>=4 & condition<=15) = 4;   % Type 2 (Cond # 4-15)
 trialType(condition>=16 & condition<=21) = 2;  % Type 1a Spatial interference (Cond # 16-21)
 trialType(condition>=22 & condition<=27) = 3;  % Type 1b Distractor interference (Cond # 21-27)
 
+%% Parse other event times
+respType = zeros(1,nTrials);
+correct = trigs(trigs>=200 & trigs<=206);
+respType(correct == 200 | correct == 204) = 1;    % CORRECT ANSWERS
+respType(correct == 201 | correct == 205) = 2;   % INCORRECT ANSWERS
+
 
 %% organizing responses & calculating reaction time.
 responses = trigs(trigs>=100 & trigs<=104);
@@ -102,11 +110,15 @@ namesAll = {NS5.ElectrodesInfo.Label};
 if strcmpi (params.region, 'hippocampus')
     regCh = find ((strncmp ('uHH',namesAll,3) == 1) | (strncmp ('uHT',namesAll,3) == 1)...
         | (strncmp ('uHB',namesAll,3) == 1) | (strncmp ('uHC',namesAll,3) == 1)| (strncmp ('uLHC',namesAll,3) == 1)...
-        | (strncmp ('uRHC',namesAll,3) == 1) | (strncmp ('HH',namesAll,2) == 1) |(strncmp ('HT',namesAll,2) == 1));
+        | (strncmp ('uRHC',namesAll,3) == 1) | (strncmp ('HH',namesAll,2) == 1) |(strncmp ('HT',namesAll,2) == 1)...
+        |(strncmp ('HC',namesAll,2) == 1)|(strncmp ('LHC',namesAll,3) == 1));
 elseif strcmpi (params.region, 'acc')
     regCh = find ((strncmp ('uAC',namesAll,3) == 1));
 elseif strcmpi (params.region, 'all')
     regCh = find ((strncmp ('ainp',namesAll,4) ~= 1));
+end
+if strcmpi(params.wire, 'macro')
+    regCh = regCh(params.macronum);
 end
 interval = NS5.MetaTags.SamplingFreq/params.Fs;
 samples = length(NS5.Data);
@@ -124,50 +136,54 @@ end
 clear NS5;
 
 %% Notch filter data
-display (sprintf('Removing noise using %s...\n',upper(params.denoiseMethod)));
-switch params.denoiseMethod
-    case 'PCA'
-        LFP2 = remove1stPC(LFP);
-        display('...done.')
-    case 'notch'
-        display(sprintf('Applying NOTCH filter at %d Hz to...',params.notch));
-        Wo = params.notch/(params.Fs/2);  BW = Wo/50;
-        [b,a] = iirnotch(Wo,BW);
-        LFP2 = zeros(size(LFP));
-        for c = 1:channelNum
-            display(sprintf('Channel %d...',c))
-            LFP2(c,:) = filtfilt(b,a,LFP(c,:));
-        end
-    case 'chronotch'
-        display('Applying CHRONUX NOTCH filter to...');
-        LFP2 = zeros(size(LFP));
-        for c = 1:channelNum
-            display(sprintf('Channel %d...',c))
-            LFP2(c,:) = rmlinesc(LFP(c,:)',params,[40 70])';
-        end
-    case 'matnotch'
-        d = designfilt('bandstopiir','FilterOrder',4, ...
-            'HalfPowerFrequency1',56,'HalfPowerFrequency2',64, ...
-            'DesignMethod','butter','SampleRate',params.Fs);
-        LFP2 = zeros(size(LFP));
-        for c = 1:channelNum
-            display(sprintf('Channel %d...',c))
-            LFP2(c,:) = filtfilt(d,LFP(c,:));
-        end
+if strcmpi(params.wire, 'micro')
+    display (sprintf('Removing noise using %s...\n',upper(params.denoiseMethod)));
+    switch params.denoiseMethod
+        case 'PCA'
+            LFP2 = remove1stPC(LFP);
+            display('...done.')
+        case 'notch'
+            display(sprintf('Applying NOTCH filter at %d Hz to...',params.notch));
+            Wo = params.notch/(params.Fs/2);  BW = Wo/50;
+            [b,a] = iirnotch(Wo,BW);
+            LFP2 = zeros(size(LFP));
+            for c = 1:channelNum
+                display(sprintf('Channel %d...',c))
+                LFP2(c,:) = filtfilt(b,a,LFP(c,:));
+            end
+        case 'chronotch'
+            display('Applying CHRONUX NOTCH filter to...');
+            LFP2 = zeros(size(LFP));
+            for c = 1:channelNum
+                display(sprintf('Channel %d...',c))
+                LFP2(c,:) = rmlinesc(LFP(c,:)',params,[40 70])';
+            end
+        case 'matnotch'
+            d = designfilt('bandstopiir','FilterOrder',4, ...
+                'HalfPowerFrequency1',56,'HalfPowerFrequency2',64, ...
+                'DesignMethod','butter','SampleRate',params.Fs);
+            LFP2 = zeros(size(LFP));
+            for c = 1:channelNum
+                display(sprintf('Channel %d...',c))
+                LFP2(c,:) = filtfilt(d,LFP(c,:));
+            end
+    end
+else
+    display('Skipped notch filter.')
+    LFP2 = LFP;
 end
-
 
 %% Low pass filter data
 if strcmp(params.wire,'micro')
     display('Applying LOW-PASS FILTER to...');
     Wn = params.cutoff/(0.5*params.Fs);
-    [b,a] = butter (2, Wn);
+    [b,a] = butter (5, Wn);
     for c = 1:channelNum
         display(sprintf('Channel %d...',c))
         LFP3(c,:) = filtfilt(b,a,LFP2(c,:));
     end
 else
-    display('Skipping low-pass filter...');
+    display('Skipped low-pass filter.');
     LFP3 = LFP2;
 end
 
@@ -206,6 +222,7 @@ if strcmpi(params.band, 'theta')
     end
 elseif strcmpi(params.band, 'all')
     LFP4 = LFP3;
+    display('Skipped band-pass for theta');
 else
     error('Band not selected');
 end
@@ -305,17 +322,25 @@ end
 display('Generating TENSOR...');
 LFPmat = zeros(((params.pre+params.post)*params.Fs)+1,nTrials,channelNum,2);
 
+nTrials = sum(trigs>199 & trigs<207);
+sub = ones(nTrials,1);
 
-for aS = 1:2
-    % which alignment spot
+alignName{1} = 'Cue';
+alignName{2} = 'Response';
+alignName{3} = 'Feedback';
+alignName{4} = 'Fixation';
+
+
+for aS = 1:4
     switch aS
-        case 1
-            alignName = 'Cue';
-            trialStarts =  trigTimes(trigs>=1 & trigs<28);
-            nTrials = sum(trigs>=1 & trigs<28);
-        case 2
-            alignName = 'Response';
-            trialStarts =  trigTimes(trigs>=100 & trigs<=105);
+        case 1  %CUE
+            trialStarts =  trigTimes(find((trigs>199 & trigs<207))-2*sub); 
+        case 2  %RESPONSE
+            trialStarts =  trigTimes(find((trigs>199 & trigs<207))-sub);
+        case 3  %FEEDBACK
+            trialStarts = trigTimes(trigs>199 & trigs<207);
+        case 4  %FIXATION
+            trialStarts = trigTimes(find((trigs>199 & trigs<207))-3*sub);
     end
     asfig(aS) = figure;
     rejectTrials = [];
@@ -348,28 +373,16 @@ for aS = 1:2
     end
     
     % Delete the outlier channels
-    uniqueRejects = unique(rejectTrials);
-    LFPmat(:,uniqueRejects,:,:) = NaN;
-    trialType(uniqueRejects)= NaN;
+     uniqueRejects = unique(rejectTrials);
+%     LFPmat(:,uniqueRejects,:,:) = NaN;
+%     trialType(uniqueRejects)= NaN;
     
-    title(axlfp(1),sprintf('aligned on %s BEFORE DISCHARGE REMOVAL',alignName));
+    title(axlfp(1),sprintf('aligned on %s BEFORE DISCHARGE REMOVAL',alignName{aS}));
     linkaxes(axlfp(1:channelNum));
     display (sprintf('SAVING figure %d...', aS));
     saveas(asfig(aS),strcat(params.figdest, sprintf('_%s_%s%s_%s_%s_', nevp(end-6:end-5),...
-        nvName(1:end-4), upper(params.region),upper(alignName),upper(params.wire), date)),'pdf')
-    waitbar(.1*aS/2, h);
-    
-    
-    postdc = figure;
-    for ch = 1:channelNum
-        axlfp2(ch) = subtightplot(channelNum,1,ch);
-        hold on
-        plot(tsec,nanmean(LFPmat(:,trialType==1,ch,aS),2),'color',col0)
-        plot(tsec,nanmean(LFPmat(:,trialType==2,ch,aS),2),'color',col1a)
-        plot(tsec,nanmean(LFPmat(:,trialType==3,ch,aS),2),'color',col1b)
-        plot(tsec,nanmean(LFPmat(:,trialType==4,ch,aS),2),'color',col2)
-    end
-    title(axlfp2(1),sprintf('aligned on %s AFTER DISCHARGE REMOVAL',alignName));
+        nvName(1:end-4), upper(params.region),upper(alignName{aS}),upper(params.wire), date)),'pdf')
+%     waitbar(.1*aS/2, h);
 end
 display (sprintf('DELETED %d out of %d trials due to discharges...',length(uniqueRejects),nTrials));
 display ('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Part 1 Done! ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~');
@@ -378,12 +391,94 @@ display ('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Part 1 Done! ~~~~~~~~~~~~
 display('Calculating SPECTROGRAMS...');
 
 %% Calculate spectrograms
-params.fpass = params.total;
+% params.fpass = params.total;
 bandname = 'total';
 
+[~,t,f] = mtspecgramc(LFPmat(:,1,1,1),params.movingWin,params);
+tspec = linspace(-params.pre,params.post,length(t));
+
+parfor aS = 1:4
+    for ch = 1:channelNum
+        [nspec(aS,ch,:,:,:),~,~] = mtspecgramc(LFPmat(:,:,ch,aS),params.movingWin,params);
+    end
+end
+
+%% Plot total spectrogram for each alignment
+
+sp0 = squeeze(mean(nspec(1,:,:,:,:),2));
+sp1 = mean(sp0,3);
+bl1 = sp1(tspec>-1 & tspec<-.5,:);
+bl2 = mean(bl1);
+bl3 = repmat(bl2, size(sp1,1), 1);
+bls = std(bl1);
+bls1 = repmat(bls, size(sp1,1), 1);
+figure;
+for aS = 1:4
+    sp0 = squeeze(mean(nspec(aS,:,:,:,:),2));
+    sp1 = mean(sp0,3);
+    zscore = (sp1 - bl3)./bls1;
+    axh(aS) = subtightplot(1,4,aS);
+    imagesc(tspec,f(f<50),zscore(:,f<50)', [-75 75]);
+    axis xy square
+    title(sprintf('%s',upper(alignName{aS})));
+    colormap(jet)
+end
+linkaxes(axh(:))
+
+%% Plot each trial 
+figure;
+nspect1 = squeeze(mean(nspec,1)) ;
+rowcol = ceil(sqrt(length(nspect1(1,1,:))));
+
+for trial = 1:100
+    subtightplot(10,10,trial)
+    imagesc(tspec,f,normlogspec(squeeze(nspect1(:,:,trial)))')
+    title(trial)
+    colormap(jet)
+end
+
+figure;
+for trial = 101:200
+    subtightplot(10,10,trial-100)
+    imagesc(tspec,f,normlogspec(squeeze(nspect1(:,:,trial)))')
+    title(trial)
+    colormap(jet)
+end
+
+figure;
+for trial = 201:nTrials
+    subtightplot(10,10,trial-200)
+    imagesc(tspec,f,normlogspec(squeeze(nspect1(:,:,trial)))')
+    title(trial)
+    colormap(jet)
+end
+
+
+%% Response Stuff
+parfor ch = 1:channelNum
+    [nsper(ch,:,:,:),~,~] = mtspecgramc(LFPmat(:,:,ch,2),params.movingWin,params);
+end
+
+
+spr1 = mean(nsper,1);
+spr2 = mean(spr1,4);
+spr3 = squeeze(spr2);
+
+zscore = (spr3 - bl3)./bls1;
+figure;
+imagesc(tspec,f,zscore');
+axis xy square
+
+colormap(jet)
+
+%% figs
 for bS = 1:6
     specfig(bS) = figure;
 end
+
+%% Calculate spectrograms for ALL trials & channels and concatenate in third (trials) dimension
+
+
 
 for aS = 1:2
     switch aS
@@ -393,6 +488,7 @@ for aS = 1:2
             alignName = 'Response';
     end
     plotnum = channelNum*4;
+    blspec = [];
     for  ch = 1:channelNum
         
         [blspec,t,f] = mtspecgramc(LFPmat(:,:,ch,1),params.movingWin,params);
