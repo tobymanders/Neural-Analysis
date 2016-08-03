@@ -66,34 +66,55 @@ display ('Extracting trial information...');
 trigs = NEV.Data.SerialDigitalIO.UnparsedData;
 trigTimes = NEV.Data.SerialDigitalIO.TimeStampSec;
 TimeRes = NEV.MetaTags.TimeRes;
-nTrials = sum(trigs==90);
+nTrials = sum(trigs>199 & trigs<207);
 % detect and remove false starts or practice
 if max(diff(trigTimes) > 6)
     display(sprintf('\nIt seems there were practice trials in this file...\n\nRemoving %d events before event time gap.',find(diff(trigTimes) > 6)))
     trigs(1:find(diff(trigTimes) > 6)) = [];
     trigTimes(1:find(diff(trigTimes) > 6)) = [];
-    nTrials = sum(trigs==90);
+    nTrials = sum(trigs>199 & trigs<207);
 end
 
 %% parsing behavior &  making a vector of conflict types.
 trialType = zeros(1,nTrials);
-condition = trigs(trigs>=1 & trigs<=27);
+butNum = zeros(1,nTrials);
+sub1 = ones(nTrials,1);
+buttons = trigs(find(trigs>199 & trigs<207)-sub1);
+condition = trigs(find(trigs>199 & trigs<207)-2*sub1);
+
 % These are the correct codes. Double Checked on 20160216
 trialType(condition>=1 & condition<=3) = 1;    % Type 0 (Cond # 1-3)
 trialType(condition>=4 & condition<=15) = 4;   % Type 2 (Cond # 4-15)
 trialType(condition>=16 & condition<=21) = 2;  % Type 1a Spatial interference (Cond # 16-21)
 trialType(condition>=22 & condition<=27) = 3;  % Type 1b Distractor interference (Cond # 21-27)
 
-%% Parse other event times
+butNum(buttons == 101) = 1;
+butNum(buttons == 102) = 2;
+butNum(buttons == 103) = 3;
+
+% Parse valence
 respType = zeros(1,nTrials);
 correct = trigs(trigs>=200 & trigs<=206);
-respType(correct == 200 | correct == 204) = 1;    % CORRECT ANSWERS
-respType(correct == 201 | correct == 205) = 2;   % INCORRECT ANSWERS
+respType(correct == 204 | correct == 205) = 1;    % NEUTRAL ANSWERS
+respType(correct == 200 | correct == 201) = 2;   % VALENCED ANSWERS
+valname{1} = 'neutral';
+valname{2} = 'valenced';
+
+% Pull out answer location
+left = [1 8 9 13 18 20 12 22 23];
+right = [3 6 7 10 11 17 19 26 27];
+butPos = 2*ones(1,nTrials);
+butPos(ismember(condition,left)) = 1; % left answers
+butPos(ismember(condition,right)) = 3; % right answers
+posname{1} = 'left';
+posname{2} = 'middle';
+posname{3} = 'right';
+
 
 
 %% organizing responses & calculating reaction time.
-responses = trigs(trigs>=100 & trigs<=104);
-rt = trigTimes(trigs>=100 & trigs<104) - trigTimes(trigs>=1 & trigs<28);
+sub2 = ones(nTrials,1);
+rt = trigTimes(find(trigs>199 & trigs<207)-sub2) - trigTimes(find(trigs>199 & trigs<207)-2*sub2);
 
 %% Open NS5
 display (sprintf('Opening raw %s data...', params.source));
@@ -133,6 +154,7 @@ end
 for i = 1:channelNum
     LFP(i,:) = NS5.Data(regCh(i),1:interval:end);
 end
+
 clear NS5;
 
 %% Notch filter data
@@ -373,9 +395,13 @@ for aS = 1:4
     end
     
     % Delete the outlier channels
-     uniqueRejects = unique(rejectTrials);
+    uniqueRejects = unique(rejectTrials);
 %     LFPmat(:,uniqueRejects,:,:) = NaN;
-%     trialType(uniqueRejects)= NaN;
+    trialType(uniqueRejects)= NaN;
+    butPos(uniqueRejects) = NaN;
+    butNum(uniqueRejects) = NaN;
+    respType(uniqueRejects) = NaN;
+    
     
     title(axlfp(1),sprintf('aligned on %s BEFORE DISCHARGE REMOVAL',alignName{aS}));
     linkaxes(axlfp(1:channelNum));
@@ -405,7 +431,7 @@ end
 
 %% Plot total spectrogram for each alignment
 
-sp0 = squeeze(mean(nspec(1,:,:,:,:),2));
+sp0 = squeeze(mean(nspec(1,:,:,:,~isnan(respType)),2));
 sp1 = mean(sp0,3);
 bl1 = sp1(tspec>-1 & tspec<-.5,:);
 bl2 = mean(bl1);
@@ -414,235 +440,300 @@ bls = std(bl1);
 bls1 = repmat(bls, size(sp1,1), 1);
 figure;
 for aS = 1:4
-    sp0 = squeeze(mean(nspec(aS,:,:,:,:),2));
+    sp0 = squeeze(mean(nspec(aS,:,:,:,~isnan(respType)),2));
     sp1 = mean(sp0,3);
     zscore = (sp1 - bl3)./bls1;
     axh(aS) = subtightplot(1,4,aS);
-    imagesc(tspec,f(f<50),zscore(:,f<50)', [-75 75]);
+    imagesc(tspec,f(f<50),zscore(:,f<50)');
     axis xy square
     title(sprintf('%s',upper(alignName{aS})));
     colormap(jet)
 end
 linkaxes(axh(:))
 
-%% Plot each trial 
+%% Look at conflicts, correctness for each alignment. Look at valence for feedback.
 figure;
-nspect1 = squeeze(mean(nspec,1)) ;
-rowcol = ceil(sqrt(length(nspect1(1,1,:))));
-
-for trial = 1:100
-    subtightplot(10,10,trial)
-    imagesc(tspec,f,normlogspec(squeeze(nspect1(:,:,trial)))')
-    title(trial)
-    colormap(jet)
-end
-
-figure;
-for trial = 101:200
-    subtightplot(10,10,trial-100)
-    imagesc(tspec,f,normlogspec(squeeze(nspect1(:,:,trial)))')
-    title(trial)
-    colormap(jet)
-end
-
-figure;
-for trial = 201:nTrials
-    subtightplot(10,10,trial-200)
-    imagesc(tspec,f,normlogspec(squeeze(nspect1(:,:,trial)))')
-    title(trial)
-    colormap(jet)
-end
-
-
-%% Response Stuff
-parfor ch = 1:channelNum
-    [nsper(ch,:,:,:),~,~] = mtspecgramc(LFPmat(:,:,ch,2),params.movingWin,params);
-end
-
-
-spr1 = mean(nsper,1);
-spr2 = mean(spr1,4);
-spr3 = squeeze(spr2);
-
-zscore = (spr3 - bl3)./bls1;
-figure;
-imagesc(tspec,f,zscore');
-axis xy square
-
-colormap(jet)
-
-%% figs
-for bS = 1:6
-    specfig(bS) = figure;
-end
-
-%% Calculate spectrograms for ALL trials & channels and concatenate in third (trials) dimension
-
-
-
-for aS = 1:2
-    switch aS
-        case 1
-            alignName = 'Cue';
-        case 2
-            alignName = 'Response';
-    end
-    plotnum = channelNum*4;
-    blspec = [];
-    for  ch = 1:channelNum
-        
-        [blspec,t,f] = mtspecgramc(LFPmat(:,:,ch,1),params.movingWin,params);
-        tspec = linspace(-params.pre,params.post,length(t));
-        
-        % Find loud baselines & delete those trials
-        trange = tspec>params.blstart & tspec<params.blend;
-        highbases = outliersright(squeeze(mean(mean(blspec(:,trange,:),2),1)));
-        LFPmat(:,highbases,:,aS) = NaN;
-        trialType(highbases) = NaN;
-        blspec(:,:,highbases) = NaN;
-        blspec2 = nanmean(blspec,3);
-        
-        blsubspec = repmat(mean(blspec2(tspec>params.blstart & tspec<params.blend,:)),length(tspec),1);
-        cols = 2;
-        rows = channelNum*4;
-        display(sprintf('Channel %d... DONE!',ch));
-        
-        
-        
-        parfor conf = 1:4
-            [S{conf,ch,aS},t,~] = mtspecgramc(LFPmat(:,trialType==conf,ch,aS),params.movingWin,params);
-            U{conf,ch,aS} = squeeze(mean(S{conf,ch,aS},3));
-            T(conf,ch,aS,:,:) = squeeze(mean(S{conf,ch,aS},3));
-        end
-        
-        
-        for bS = 1:6
-            switch bS
-                case 1
-                    params.range = params.delta;
-                    bandname = 'delta';
-                case 2
-                    params.range = params.theta;
-                    bandname = 'theta';
-                case 3
-                    params.range = params.beta;
-                    bandname = 'beta';
-                case 4
-                    params.range = params.lowgamma;
-                    bandname = 'lowgamma';
-                case 5
-                    params.range = params.highgamma;
-                    bandname = 'highgamma';
-                case 6
-                    params.range = params.alpha;
-                    bandname = 'alpha';
-            end
-            set(specfig(bS),'name',bandname);
-            set(0,'currentfigure',specfig(bS));
-            hold on;
-            fspec = linspace(params.fpass(1),params.fpass(2),length(blsubspec(1,:)));
-            for conf = 1:4
-                %             prog = ((ch+(conf-1)/4)*aS/channelNum/2)*.9 + .1;
-                %             waitbar(prog,h)
-                currplot = (ch-1)*4+conf;
-                subplotnum = ((conf-1)*channelNum+ch)*2+aS-2;
-                
-                
-                %             if ~strcmpi(params.band,'theta')
-                %                 specax(currplot)=subtightplot(channelNum*2,4,currplot);
-                %                 axis xy square
-                %             else
-                specax(currplot)=subtightplot(rows, cols, subplotnum);
-                %             end
-                imagesc(tspec,f,(U{conf,ch,aS}(:,fspec>params.range(1) & fspec<params.range(2))./blsubspec(:,fspec>params.range(1) & fspec<params.range(2)))');
-                %imagesc(tspec,f,normlogspec((U{conf,ch,aS}))');
-                
-                xlim([-1 2])
-                set(gca,'linewidth',2,'fontsize',12)
-                title(sprintf('%d-%d',ch,conf),'FontSize',5);
-                
-                %                 clear blspec
-            end
-            display (sprintf('%s band...',upper(bandname)));
-            colormap(jet)
-
-        end
-        %     set(specax(2:end), 'XTickLabel',[], 'YTickLabel',[]);
-        %         set(specax(1:end-1), 'XTickLabel',[], 'YTickLabel',[]);
-        hold on;
-    end %loop alignment
-    
-    
-    
-    %     axes = findall(fig(1),'type','axes');
-    %     linkaxes (axes,'xy');
-    hold off;
-    display(sprintf('SAVING figure %d...',aS))
-    
-    
-    
-    %% Calculate power changes in different bands during task
-    fpassrange = params.fpass(2)-params.fpass(1);
-    [~,fbands,~] = size(S{1,1,1});
-    
-    
-    
-    low = floor((params.fpass(1)-params.fpass(1))/fpassrange*fbands+1);
-    high = floor((params.fpass(2)-params.fpass(1))/fpassrange*fbands);
-    
-    fig(2) = figure;
-    for ch = 1:channelNum
-        for conf = 1:4
-            trialpower = squeeze(nanmean(S{conf,ch,1}(:,low:high,:),2)); % power of theta in one trial over time
-            trialnums = find(trialType==conf);
-            for trial = 1:length(trialnums)
-                rtpower(trial) = mean(trialpower(tspec>0 & tspec<rt(trialnums(trial)),trial)); % mean of theta power during rt
-                basepower(trial) = mean(trialpower(tspec>params.blstart & tspec<params.blend,trial));
-            end
-            powerchange = 100*(rtpower-basepower)./basepower; % ratio of rt to bl power
-            subplot(ceil(sqrt(channelNum*4)),ceil(sqrt(channelNum*4)),(ch-1)*4+conf)
-            bar(sort(powerchange));
-            title(sprintf('Channel %d, Conflict %d',ch,conf));
-            meanchange(ch,conf) = nanmean(powerchange);
-            semchange(ch,conf) = meanchange(ch,conf)/sqrt(length(powerchange));
-            clear powerchange trialnums trialpower rtpower basepower
-        end
-    end
-    
-    
-    fig(3) = figure;
-    for ch = 1:channelNum
-        subplot(2,4,ch);
-        barwitherr(semchange(ch,:),meanchange(ch,:));
-        title(sprintf('Channel %d',ch),'FontSize',8)
-    end
-    
-    fig(4) = figure;
-    barwitherr(mean(semchange,1),mean(meanchange,1));
-    
-    %Save figures
-    parfor p = 1:4
-        saveas(fig(p),strcat(params.figdest, sprintf('CUBF_%s_%s%s_%s_%s_', nevp(end-6:end-5),...
-            nvName(1:end-4), upper(params.region),upper(alignName),upper(params.wire),upper(bandname), date),'_FIG_',num2str(p)),'pdf')
+for aS = 1:4
+    for conf = 1:4
+        spn0 = squeeze(mean(nspec(aS,:,:,:,trialType == conf),2));
+        spn1 = mean(spn0,3);
+        zscore = (spn1 - bl3)./bls1;
+        axm(aS,conf) = subplot(4,4,(aS-1)*4+conf);
+        imagesc(tspec,f(f<50),zscore(:,f<50)', [-30 30]);
+        axis xy square
+        title(sprintf('%s conflict %d',upper(alignName{aS}),conf));
+        colormap(jet)
+        legend
     end
 end
+linkaxes(axm(:,:));
+
+% Plot feedback valence
+figure;
+for valence = 1:2
+   spv = squeeze(mean(nspec(3,:,:,:,respType == valence),2)); 
+   spv1 = mean(spv,3);
+   zscore = (spv1 - bl3)./bls1;
+   axn(valence) = subplot(1,2,valence);
+   imagesc(tspec,f(f<50),zscore(:,f<50)');
+   axis xy square
+   title(sprintf('Feedback %s',valname{valence}));
+   colormap(jet)
+end
+linkaxes(axn(:),'xy');
+
+% plot button number
+figure;
+for aS = 1:4
+    for but = 1:3
+        spo0 = squeeze(mean(nspec(aS,:,:,:,butNum == but),2));
+        spo1 = mean(spo0,3);
+        zscore = (spo1 - bl3)./bls1;
+        axo(aS,but) = subplot(4,3,(aS-1)*3+but);
+        imagesc(tspec,f(f<50),zscore(:,f<50)', [-30 30]);
+        axis xy square
+        title(sprintf('Button %d on %s',but,upper(alignName{aS})));
+        colormap(jet)
+    end
+end
+linkaxes(axo(:,:), 'xy');
+
+% plot button location l/r/c
+figure;
+for aS = 1:4
+    for loc = 1:3
+        spp0 = squeeze(mean(nspec(aS,:,:,:,butPos == loc),2));
+        spp1 = mean(spp0,3);
+        zscore = (spp1 - bl3)./bls1;
+        axp(aS,loc) = subplot(4,3,(aS-1)*3+loc);
+        imagesc(tspec,f(f<50),zscore(:,f<50)', [-30 30]);
+        axis xy square
+        title(sprintf('Location %s on %s',upper(posname{loc}),upper(alignName{aS})));
+        colormap(jet)
+    end
+end
+linkaxes(axp(:,:), 'xy');
+
+
+% 
+% %% Plot each trial 
+% figure;
+% nspect1 = squeeze(mean(nspec,1)) ;
+% rowcol = ceil(sqrt(length(nspect1(1,1,:))));
+% 
+% for trial = 1:100
+%     subtightplot(10,10,trial)
+%     imagesc(tspec,f,normlogspec(squeeze(nspect1(:,:,trial)))')
+%     title(trial)
+%     colormap(jet)
+% end
+% 
+% figure;
+% for trial = 101:200
+%     subtightplot(10,10,trial-100)
+%     imagesc(tspec,f,normlogspec(squeeze(nspect1(:,:,trial)))')
+%     title(trial)
+%     colormap(jet)
+% end
+% 
+% figure;
+% for trial = 201:nTrials
+%     subtightplot(10,10,trial-200)
+%     imagesc(tspec,f,normlogspec(squeeze(nspect1(:,:,trial)))')
+%     title(trial)
+%     colormap(jet)
+% end
+% 
+% 
+% % %% Response Stuff TODO: STRIP THIS CODE. specs calculated above.
+% % parfor ch = 1:channelNum
+% %     [nsper(ch,:,:,:),~,~] = mtspecgramc(LFPmat(:,:,ch,2),params.movingWin,params);
+% % end
+% % 
+% % 
+% % spr1 = mean(nsper,1);
+% % spr2 = mean(spr1,4);
+% % spr3 = squeeze(spr2);
+% % 
+% % zscore = (spr3 - bl3)./bls1;
+% % figure;
+% % imagesc(tspec,f,zscore');
+% % axis xy square
+% % 
+% % colormap(jet)
+% 
+% %% figs
+% for bS = 1:6
+%     specfig(bS) = figure;
+% end
+% 
+% %% Calculate spectrograms for ALL trials & channels and concatenate in third (trials) dimension
+% 
+% 
+% 
+% for aS = 1:2 % Note: strip this code. Spectrograms calculated above.
+%     switch aS
+%         case 1
+%             alignName = 'Cue';
+%         case 2
+%             alignName = 'Response';
+%     end
+%     plotnum = channelNum*4;
+%     blspec = [];
+%     for  ch = 1:channelNum
+%         
+%         [blspec,t,f] = mtspecgramc(LFPmat(:,:,ch,1),params.movingWin,params);
+%         tspec = linspace(-params.pre,params.post,length(t));
+%         
+%         % Find loud baselines & delete those trials
+%         trange = tspec>params.blstart & tspec<params.blend;
+%         highbases = outliersright(squeeze(mean(mean(blspec(:,trange,:),2),1)));
+%         LFPmat(:,highbases,:,aS) = NaN;
+%         trialType(highbases) = NaN;
+%         blspec(:,:,highbases) = NaN;
+%         blspec2 = nanmean(blspec,3);
+%         
+%         blsubspec = repmat(mean(blspec2(tspec>params.blstart & tspec<params.blend,:)),length(tspec),1);
+%         cols = 2;
+%         rows = channelNum*4;
+%         display(sprintf('Channel %d... DONE!',ch));
+%         
+%         
+%         
+%         parfor conf = 1:4
+%             [S{conf,ch,aS},t,~] = mtspecgramc(LFPmat(:,trialType==conf,ch,aS),params.movingWin,params);
+%             U{conf,ch,aS} = squeeze(mean(S{conf,ch,aS},3));
+%             T(conf,ch,aS,:,:) = squeeze(mean(S{conf,ch,aS},3));
+%         end
+%         
+%         
+%         for bS = 1:6
+%             switch bS
+%                 case 1
+%                     params.range = params.delta;
+%                     bandname = 'delta';
+%                 case 2
+%                     params.range = params.theta;
+%                     bandname = 'theta';
+%                 case 3
+%                     params.range = params.beta;
+%                     bandname = 'beta';
+%                 case 4
+%                     params.range = params.lowgamma;
+%                     bandname = 'lowgamma';
+%                 case 5
+%                     params.range = params.highgamma;
+%                     bandname = 'highgamma';
+%                 case 6
+%                     params.range = params.alpha;
+%                     bandname = 'alpha';
+%             end
+%             set(specfig(bS),'name',bandname);
+%             set(0,'currentfigure',specfig(bS));
+%             hold on;
+%             fspec = linspace(params.fpass(1),params.fpass(2),length(blsubspec(1,:)));
+%             for conf = 1:4
+%                 %             prog = ((ch+(conf-1)/4)*aS/channelNum/2)*.9 + .1;
+%                 %             waitbar(prog,h)
+%                 currplot = (ch-1)*4+conf;
+%                 subplotnum = ((conf-1)*channelNum+ch)*2+aS-2;
+%                 
+%                 
+%                 %             if ~strcmpi(params.band,'theta')
+%                 %                 specax(currplot)=subtightplot(channelNum*2,4,currplot);
+%                 %                 axis xy square
+%                 %             else
+%                 specax(currplot)=subtightplot(rows, cols, subplotnum);
+%                 %             end
+%                 imagesc(tspec,f,(U{conf,ch,aS}(:,fspec>params.range(1) & fspec<params.range(2))./blsubspec(:,fspec>params.range(1) & fspec<params.range(2)))');
+%                 %imagesc(tspec,f,normlogspec((U{conf,ch,aS}))');
+%                 
+%                 xlim([-1 2])
+%                 set(gca,'linewidth',2,'fontsize',12)
+%                 title(sprintf('%d-%d',ch,conf),'FontSize',5);
+%                 
+%                 %                 clear blspec
+%             end
+%             display (sprintf('%s band...',upper(bandname)));
+%             colormap(jet)
+% 
+%         end
+%         %     set(specax(2:end), 'XTickLabel',[], 'YTickLabel',[]);
+%         %         set(specax(1:end-1), 'XTickLabel',[], 'YTickLabel',[]);
+%         hold on;
+%     end %loop alignment
+%     
+%     
+%     
+%     %     axes = findall(fig(1),'type','axes');
+%     %     linkaxes (axes,'xy');
+%     hold off;
+%     display(sprintf('SAVING figure %d...',aS))
+%     
+%     
+%     
+%     %% Calculate power changes in different bands during task
+%     fpassrange = params.fpass(2)-params.fpass(1);
+%     [~,fbands,~] = size(S{1,1,1});
+%     
+%     
+%     
+%     low = floor((params.fpass(1)-params.fpass(1))/fpassrange*fbands+1);
+%     high = floor((params.fpass(2)-params.fpass(1))/fpassrange*fbands);
+%     
+%     fig(2) = figure;
+%     for ch = 1:channelNum
+%         for conf = 1:4
+%             trialpower = squeeze(nanmean(S{conf,ch,1}(:,low:high,:),2)); % power of theta in one trial over time
+%             trialnums = find(trialType==conf);
+%             for trial = 1:length(trialnums)
+%                 rtpower(trial) = mean(trialpower(tspec>0 & tspec<rt(trialnums(trial)),trial)); % mean of theta power during rt
+%                 basepower(trial) = mean(trialpower(tspec>params.blstart & tspec<params.blend,trial));
+%             end
+%             powerchange = 100*(rtpower-basepower)./basepower; % ratio of rt to bl power
+%             subplot(ceil(sqrt(channelNum*4)),ceil(sqrt(channelNum*4)),(ch-1)*4+conf)
+%             bar(sort(powerchange));
+%             title(sprintf('Channel %d, Conflict %d',ch,conf));
+%             meanchange(ch,conf) = nanmean(powerchange);
+%             semchange(ch,conf) = meanchange(ch,conf)/sqrt(length(powerchange));
+%             clear powerchange trialnums trialpower rtpower basepower
+%         end
+%     end
+%     
+%     
+%     fig(3) = figure;
+%     for ch = 1:channelNum
+%         subplot(2,4,ch);
+%         barwitherr(semchange(ch,:),meanchange(ch,:));
+%         title(sprintf('Channel %d',ch),'FontSize',8)
+%     end
+%     
+%     fig(4) = figure;
+%     barwitherr(mean(semchange,1),mean(meanchange,1));
+%     
+%     %Save figures
+%     parfor p = 1:4
+%         saveas(fig(p),strcat(params.figdest, sprintf('CUBF_%s_%s%s_%s_%s_', nevp(end-6:end-5),...
+%             nvName(1:end-4), upper(params.region),upper(alignName),upper(params.wire),upper(bandname), date),'_FIG_',num2str(p)),'pdf')
+%     end
+% end
 
 %% Plot spectrogram for all trials, all conditions, all channels
-
-figure;
-allspec = squeeze(mean(squeeze(mean(T,1)),1));
-bltot = mean(allspec(1,tspec>params.blstart & tspec>params.blend,:),2);
-bltotrep = repmat(squeeze(bltot)',length(tspec),1);
-imagesc(tspec,f,(squeeze(allspec(1,:,:))./bltotrep)'),
-title('CUE ALL');
-axis xy square
-colormap(jet);
-
-figure;
-imagesc(tspec,f,(squeeze(allspec(2,:,:))./bltotrep)'),
-title('RESPONSE ALL');
-colormap(jet);
-axis xy square
-
-
-close(h);
+% 
+% figure;
+% allspec = squeeze(mean(squeeze(mean(T,1)),1));
+% bltot = mean(allspec(1,tspec>params.blstart & tspec>params.blend,:),2);
+% bltotrep = repmat(squeeze(bltot)',length(tspec),1);
+% imagesc(tspec,f,(squeeze(allspec(1,:,:))./bltotrep)'),
+% title('CUE ALL');
+% axis xy square
+% colormap(jet);
+% 
+% figure;
+% imagesc(tspec,f,(squeeze(allspec(2,:,:))./bltotrep)'),
+% title('RESPONSE ALL');
+% colormap(jet);
+% axis xy square
+% 
+% 
+% close(h);
