@@ -35,7 +35,7 @@ dischargeFlag = 0; %Enables discharge detection
 removeDischarge = 0; %Strips discharge cues from LFP data
 preDisch = 5;
 postDisch = 5; %Specifies amount of time before and after discharges in which to eliminate cues
-filepath = 'C:\Users\melete2\Desktop\TobyData\';
+filepath = 'C:\Users\ShethLab\Desktop\TobyData\';
 cd ([filepath num2str(patientID) '\Raw\'])
 files = dir ('*.ns5');
 files = {files.name}';
@@ -67,12 +67,15 @@ end
 for curr = 1:length(files)
     file = char(files(curr));
     %% Open NSx file
-    openNSxNew (strcat(filepath, num2str(patientID), '\Raw\', file),'skipfactor',10);
+    openNSx (strcat(filepath, num2str(patientID), '\Raw\', file),'skipfactor',10);
     
     %% Find channels with hippocampal data and find recording frequency
     namesAll = {NS5.ElectrodesInfo.Label};
     if strcmpi (region, 'hippocampus')
-        regCh = find ((strncmp ('uHH',namesAll,3) == 1) | (strncmp ('uHT',namesAll,3) == 1) | (strncmp ('uHB',namesAll,3) == 1) | (strncmp ('uHC',namesAll,3) == 1));
+        regCh = find ((strncmp ('uHH',namesAll,3) == 1) | (strncmp ('uHT',namesAll,3) == 1)...
+        | (strncmp ('uHB',namesAll,3) == 1) | (strncmp ('uHC',namesAll,3) == 1)| (strncmp ('uLHC',namesAll,3) == 1)...
+        | (strncmp ('uRHC',namesAll,3) == 1) | (strncmp ('HH',namesAll,2) == 1) |(strncmp ('HT',namesAll,2) == 1)...
+        |(strncmp ('HC',namesAll,2) == 1)|(strncmp ('LHC',namesAll,3) == 1));
     elseif strcmpi (region, 'acc')
         regCh = find ((strncmp ('uAC',namesAll,3) == 1));
     elseif strcmpi (region, 'all')
@@ -111,7 +114,7 @@ for curr = 1:length(files)
         
         %% Bandpass filter amplifier data for spikes
         Wn = [300/(0.5*sample_rate) 7500/(0.5*sample_rate)];
-        [b,a] = butter (2, Wn);
+        [b,a] = butter (4, Wn);
         highPass = nan(size(raw));
         for ch = 1:channelNum
             highPass(ch,:) = filtfilt(b,a,raw(ch,:));
@@ -222,10 +225,11 @@ for curr = 1:length(files)
         TimeRes = NEV.MetaTags.TimeRes;
         memSample(end+1) = getfield(memory,'MemUsedMATLAB');
 
-        nTrials = sum(trigs==90);
+        nTrials = sum(trigs>199 & trigs <207);
         %% parsing behavior
         trialType = zeros(1,nTrials);
-        condition = trigs(trigs>=1 & trigs<28);
+        sub = ones(nTrials,1);
+        condition = trigs(find(trigs>199 & trigs<207) - 2*sub);
         
         
         %% These are the correct codes. Double Checked on 20160216
@@ -236,8 +240,10 @@ for curr = 1:length(files)
         
         
         %% Cues and response times.
-        cueTimes = trigTimes(trigs>=1 & trigs<=27);
-        respTimes = trigTimes(trigs>=100 & trigs<=103);
+        
+        cueTimes = trigTimes(find(trigs>199 & trigs<207) - 2*sub);
+        respTimes = trigTimes(find(trigs>199 & trigs<207) - sub);
+        
         if length(cueTimes) == length(respTimes);
             RTs = respTimes - cueTimes;
         end

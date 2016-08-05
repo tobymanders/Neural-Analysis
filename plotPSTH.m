@@ -23,6 +23,22 @@ for m = 1:length(units)
 end
 
 
+%% Pull data from nev file
+[nevf, nevp] = uigetfile;
+[~, nvName, ~] = fileparts([nevp nevf]);
+NEV = openNEV([nevp nevf], 'nomat', 'nosave');
+trigs = NEV.Data.SerialDigitalIO.UnparsedData;
+trigTimes = NEV.Data.SerialDigitalIO.TimeStampSec;
+TimeRes = NEV.MetaTags.TimeRes;
+nTrials = sum(trigs>199 & trigs<207);
+% detect and remove false starts or practice
+if max(diff(trigTimes) > 6)
+    display(sprintf('\nIt seems there were practice trials in this file...\n\nRemoving %d events before event time gap.',find(diff(trigTimes) > 6)))
+    trigs(1:find(diff(trigTimes) > 6)) = [];
+    trigTimes(1:find(diff(trigTimes) > 6)) = [];
+    nTrials = sum(trigs>199 & trigs<207);
+end
+
 
 %% timing (seconds)
 pre = 2;
@@ -158,10 +174,9 @@ for rankRT = 1:2
                     switch aS2
                         case 1
                             line([RT(I(tt)) RT(I(tt))], [tt-(9/20) tt+(9/20)],'linewidth',4, 'color', 'Black')
-                            sprintf('made it to first case')
                         case 2
                             line([-RT(I(tt)) -RT(I(tt))], [tt-(9/20) tt+(9/20)],'linewidth',4, 'color', 'Black')
-                            sprintf('made it to second case')
+                            
                     end
 
                     
@@ -264,7 +279,7 @@ for rankRT = 1:2
                 
                 
                 %% saving figures.
-                fpath = 'C:\Users\melete2\Desktop\TobyData\figs\';
+                fpath = 'C:\Users\ShethLab\Desktop\TobyData\figures\';
                 ss = (sprintf('%s_session_%d_Channel_%d_Unit_%d_Conflict_%s_aligned_%s_ordered',patientID,sessionNum,inclChans(ch),un-1,alignName,rankFlag));
                 fName = [fpath ss];
                 saveas(aS2,fName, 'pdf')
